@@ -39,6 +39,8 @@ export interface SessionConfig {
 export interface CallMetadata {
   language: string;
   phoneNumber: string;
+  customSystemPrompt?: string;
+  customVoice?: string;
 }
 
 export interface TwilioMediaMessage {

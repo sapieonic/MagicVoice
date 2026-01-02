@@ -2,16 +2,14 @@ import express, { Request, Response } from 'express';
 import WebSocket from 'ws';
 import { twilioClient, twilioPhoneNumber } from './twilio-utils.js';
 import { makeSession, getAppConfiguration } from './utils.js';
-import { audioRecorderManager } from '../utils/audioUtils.js';
 import dotenv from 'dotenv';
-import {
-  CallMetadata,
-  TwilioMediaMessage,
+import { 
+  CallMetadata, 
+  TwilioMediaMessage, 
   OpenAIRealtimeMessage,
   TwilioCallRequest,
-  TwilioWebhookRequest
+  TwilioWebhookRequest 
 } from '../types/index.js';
-import { executeFunctionCall } from '../functions/index.js';
 
 dotenv.config();
 
@@ -20,9 +18,9 @@ const activeConnections = new Map<string, WebSocket>();
 
 interface ExtendedCallMetadata extends CallMetadata {
   personaType?: string;
-  enableRecording?: boolean;
 }
-const callMetadata = new Map<string, ExtendedCallMetadata>();
+// Export callMetadata for use by /api/call endpoint
+export const callMetadata = new Map<string, ExtendedCallMetadata>();
 
 // Get configuration
 const appConfig = getAppConfiguration();
@@ -38,22 +36,18 @@ const LOG_EVENT_TYPES = [
     'input_audio_buffer.speech_stopped',
     'input_audio_buffer.speech_started',
     'session.created',
-    'session.updated',
-    'response.output_item.added',
-    'response.output_item.done',
-    'conversation.item.created'
+    'session.updated'
 ];
 
 // Enhanced request interface for calls
 interface EnhancedTwilioCallRequest extends TwilioCallRequest {
   personaType?: string;
-  enableRecording?: boolean;
 }
 
 // Initiate an outbound call
 router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioCallRequest>, res: Response): Promise<void> => {
   try {
-    const { phoneNumber, language = appConfig.bot.defaultLanguage, personaType, enableRecording = false } = req.body;
+    const { phoneNumber, language = appConfig.bot.defaultLanguage, personaType } = req.body;
     const config = getAppConfiguration(personaType);
     console.log(`🌐 Creating Twilio call with language: ${language}, persona: ${personaType || 'default'}`);
     console.log(`📋 Using bot persona: ${config.persona.name} (${config.persona.role})`);
@@ -86,8 +80,8 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
       record: false
     });
 
-    // Store call metadata including persona and recording preference
-    callMetadata.set(call.sid, { language, phoneNumber, personaType, enableRecording });
+    // Store call metadata including persona
+    callMetadata.set(call.sid, { language, phoneNumber, personaType });
     
     console.log(`✅ Call initiated to ${phoneNumber}, Call SID: ${call.sid}`);
     res.json({ 
@@ -146,7 +140,8 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
   let callSid: string | null = null;
   let callLanguage = appConfig.bot.defaultLanguage;
   let callPersonaType: string | undefined = undefined;
-  let enableRecording = false;
+  let customSystemPrompt: string | undefined = undefined;
+  let customVoice: string | undefined = undefined;
   let latestMediaTimestamp = 0;
   let lastAssistantItem: string | null = null;
   let markQueue: string[] = [];
@@ -162,15 +157,16 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
 
   // Initialize session with OpenAI
   const initializeSession = () => {
-    const baseSession = makeSession(callLanguage, callPersonaType);
+    // Use custom prompt if provided, otherwise use default session
+    const instructions = customSystemPrompt || makeSession(callLanguage, callPersonaType).instructions;
+    const voice = customVoice || getAppConfiguration(callPersonaType).bot.voice;
+
     const sessionUpdate = {
       type: 'session.update',
       session: {
         type: 'realtime',
         model: "gpt-4o-realtime-preview",
         output_modalities: ["audio"],
-        tools: baseSession.tools,
-        tool_choice: "auto",
         audio: {
           input: {
             format: { type: 'audio/pcmu' },
@@ -178,19 +174,21 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
           },
           output: {
             format: { type: 'audio/pcmu' },
-            voice: getAppConfiguration(callPersonaType).bot.voice
+            voice: voice
           },
         },
-        instructions: baseSession.instructions,
+        instructions: instructions,
       },
     };
 
-    const currentConfig = getAppConfiguration(callPersonaType);
-    console.log(`📋 Sending session update with ${callLanguage} instructions for persona: ${currentConfig.persona.name}`);
-    console.log(`🔧 Tools included in session:`, baseSession.tools?.map(t => t.name).join(', ') || 'None');
-    console.log(`🎯 Tool choice: ${sessionUpdate.session.tool_choice}`);
+    if (customSystemPrompt) {
+      console.log(`📋 Sending session update with custom system prompt (voice: ${voice})`);
+    } else {
+      const currentConfig = getAppConfiguration(callPersonaType);
+      console.log(`📋 Sending session update with ${callLanguage} instructions for persona: ${currentConfig.persona.name}`);
+    }
     openAiWs.send(JSON.stringify(sessionUpdate));
-    
+
     // Trigger initial response after session setup
     setTimeout(() => {
       console.log('🚀 Triggering initial bot response');
@@ -252,12 +250,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
       const response: OpenAIRealtimeMessage = JSON.parse(data.toString());
 
       if (LOG_EVENT_TYPES.includes(response.type)) {
-        console.log(`📌 OpenAI event: ${response.type}`, response.item ? `(item type: ${response.item.type})` : '');
-      }
-
-      // Log ALL events for debugging function calls
-      if (response.type.includes('function') || response.type.includes('tool')) {
-        console.log(`🔧 Function-related event: ${response.type}`, JSON.stringify(response, null, 2));
+        console.log(`📌 OpenAI event: ${response.type}`);
       }
 
       // Handle audio output from OpenAI
@@ -269,14 +262,6 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
         };
         ws.send(JSON.stringify(audioDelta));
 
-        // Record outgoing audio if enabled
-        if (callSid && response.delta && enableRecording) {
-          const recorder = audioRecorderManager.getRecorder(callSid);
-          if (recorder.recording) {
-            recorder.addOutgoingAudio(response.delta);
-          }
-        }
-
         // Track timing for interruption handling
         if (!responseStartTimestampTwilio) {
           responseStartTimestampTwilio = latestMediaTimestamp;
@@ -286,7 +271,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
         if (response.item_id) {
           lastAssistantItem = response.item_id;
         }
-
+        
         sendMark();
         console.log('🔊 Audio sent to Twilio');
       }
@@ -295,54 +280,6 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
       if (response.type === 'input_audio_buffer.speech_started') {
         console.log('🎤 User started speaking (interruption)');
         handleSpeechStartedEvent();
-      }
-
-      // Handle function calls - correct event types for Realtime API
-      if (response.type === 'response.function_call_arguments.done') {
-        console.log('🔧 Function call arguments completed');
-        try {
-          const functionName = response.name;
-          const args = JSON.parse(response.arguments || '{}');
-          const callId = response.call_id;
-
-          console.log(`🔧 Executing function: ${functionName} with args:`, args);
-
-          const result = executeFunctionCall(functionName!, args);
-
-          // Send function result back to OpenAI
-          const functionResultMessage = {
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: callId,
-              output: JSON.stringify(result)
-            }
-          };
-
-          openAiWs.send(JSON.stringify(functionResultMessage));
-
-          // Trigger response generation after function execution
-          openAiWs.send(JSON.stringify({ type: 'response.create' }));
-
-        } catch (error) {
-          console.error('❌ Error executing function call:', error);
-
-          // Send error result back to OpenAI
-          const errorMessage = {
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: response.call_id,
-              output: JSON.stringify({
-                success: false,
-                message: `Error executing function: ${error instanceof Error ? error.message : 'Unknown error'}`
-              })
-            }
-          };
-
-          openAiWs.send(JSON.stringify(errorMessage));
-          openAiWs.send(JSON.stringify({ type: 'response.create' }));
-        }
       }
 
       // Log conversation events
@@ -382,23 +319,22 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
             streamSid = data.start.streamSid;
             callSid = data.start.callSid;
 
-            // Retrieve language, persona, and recording preference from metadata
+            // Retrieve language, persona, and custom prompt from metadata
             const metadata = callMetadata.get(callSid);
-
             if (metadata) {
               callLanguage = metadata.language;
               callPersonaType = metadata.personaType;
-              enableRecording = metadata.enableRecording || false;
-              const config = getAppConfiguration(callPersonaType);
-              console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage}, Persona: ${config.persona.name}, Recording: ${enableRecording}`);
-            } else {
-              console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage} (default), Recording: ${enableRecording}`);
-            }
+              customSystemPrompt = metadata.customSystemPrompt;
+              customVoice = metadata.customVoice;
 
-            // Start recording if enabled
-            if (enableRecording && callSid) {
-              const recorder = audioRecorderManager.getRecorder(callSid);
-              recorder.start();
+              if (customSystemPrompt) {
+                console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Using custom prompt`);
+              } else {
+                const config = getAppConfiguration(callPersonaType);
+                console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage}, Persona: ${config.persona.name}`);
+              }
+            } else {
+              console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage} (default)`);
             }
 
             // Reset timestamps for new stream
@@ -411,22 +347,14 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
           // Track latest timestamp for interruption handling
           if (data.media) {
             latestMediaTimestamp = parseInt(data.media.timestamp);
-
-            // Forward audio to OpenAI FIRST (critical for interruption handling)
+            
+            // Forward audio to OpenAI
             if (openAiWs.readyState === WebSocket.OPEN && data.media.payload) {
               const audioAppend = {
                 type: 'input_audio_buffer.append',
                 audio: data.media.payload
               };
               openAiWs.send(JSON.stringify(audioAppend));
-            }
-
-            // Record incoming audio if enabled (after forwarding to ensure no delay)
-            if (callSid && data.media.payload && enableRecording) {
-              const recorder = audioRecorderManager.getRecorder(callSid);
-              if (recorder.recording) {
-                recorder.addIncomingAudio(data.media.payload);
-              }
             }
           }
           break;
@@ -440,23 +368,6 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
 
         case 'stop':
           console.log(`🛑 Media stream stopped for call: ${callSid}`);
-
-          // Stop recording if active
-          if (callSid) {
-            const recorder = audioRecorderManager.getRecorder(callSid);
-            if (recorder.recording) {
-              recorder.stop().then(paths => {
-                const fileCount = Object.keys(paths).filter(key => paths[key as keyof typeof paths]).length;
-                if (fileCount > 0) {
-                  console.log(`📼 ${fileCount} recording file(s) saved for call ${callSid}`);
-                }
-              }).catch(err => {
-                console.error(`Failed to save recordings for call ${callSid}:`, err);
-              });
-            }
-            audioRecorderManager.removeRecorder(callSid);
-          }
-
           if (openAiWs.readyState === WebSocket.OPEN) {
             openAiWs.close();
           }
@@ -474,23 +385,6 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
   // Handle connection close
   ws.on('close', () => {
     console.log('📡 Twilio WebSocket disconnected');
-
-    // Stop and save recordings
-    if (callSid) {
-      const recorder = audioRecorderManager.getRecorder(callSid);
-      if (recorder.recording) {
-        recorder.stop().then(paths => {
-          const fileCount = Object.keys(paths).filter(key => paths[key as keyof typeof paths]).length;
-          if (fileCount > 0) {
-            console.log(`📼 ${fileCount} recording file(s) saved for call ${callSid}`);
-          }
-        }).catch(err => {
-          console.error(`Failed to save recordings for call ${callSid}:`, err);
-        });
-      }
-      audioRecorderManager.removeRecorder(callSid);
-    }
-
     if (openAiWs.readyState === WebSocket.OPEN) {
       openAiWs.close();
     }

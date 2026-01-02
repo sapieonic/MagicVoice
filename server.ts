@@ -3,9 +3,11 @@ dotenv.config();
 
 import express from 'express';
 import expressWs from 'express-ws';
+import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import twilioRealtimeRouter, { mediaStreamWebSocketHandler } from './routes/twilio-realtime.js';
+import twilioRealtimeRouter, { mediaStreamWebSocketHandler, callMetadata } from './routes/twilio-realtime.js';
+import { twilioClient, twilioPhoneNumber } from './routes/twilio-utils.js';
 import rtcRouter from './routes/rtc.js';
 import observerRouter from './routes/observer.js';
 import recordingsRouter from './routes/recordings.js';
@@ -17,6 +19,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 expressWs(app);
+
+// Enable CORS for all routes
+app.use(cors());
 
 // Get app configuration
 const appConfig = getConfiguration();
@@ -80,10 +85,104 @@ app.post('/api/reload-config', (_req, res) => {
     externalConfigLoader.clearCache();
     res.json({ success: true, message: 'Configuration cache cleared successfully' });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+// Simple API endpoint for initiating calls with custom prompts
+app.post('/api/call', express.json(), async (req, res) => {
+  try {
+    const { phoneNumber, systemPrompt, voice, record = false } = req.body;
+
+    // Validation
+    if (!phoneNumber) {
+      res.type('json').status(400).json({ success: false, error: 'phoneNumber is required' });
+      return;
+    }
+    if (!systemPrompt) {
+      res.type('json').status(400).json({ success: false, error: 'systemPrompt is required' });
+      return;
+    }
+    if (!twilioClient) {
+      res.type('json').status(500).json({ success: false, error: 'Twilio not configured' });
+      return;
+    }
+
+    // Build webhook URL
+    const forwardedHost = req.get('x-forwarded-host');
+    const forwardedProto = req.get('x-forwarded-proto') || 'https';
+    const host = forwardedHost || req.get('host');
+    const baseUrl = `${forwardedProto}://${host}`;
+
+    console.log(`📞 API Call: Initiating call to ${phoneNumber} with custom prompt (record: ${record})`);
+    console.log(`📍 Using webhook base URL: ${baseUrl}`);
+
+    // Create call
+    const call = await twilioClient.calls.create({
+      to: phoneNumber,
+      from: twilioPhoneNumber!,
+      url: `${baseUrl}/twilio-realtime/answer`,
+      statusCallback: `${baseUrl}/twilio-realtime/status`,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      record: record
+    });
+
+    // Store metadata with custom prompt
+    callMetadata.set(call.sid, {
+      language: 'english',
+      phoneNumber,
+      customSystemPrompt: systemPrompt,
+      customVoice: voice
+    });
+
+    console.log(`✅ Call initiated via API - CallSid: ${call.sid}`);
+
+    res.type('json').json({
+      success: true,
+      callSid: call.sid,
+      status: call.status
+    });
+  } catch (error: any) {
+    console.error('Error initiating call via API:', error);
+    res.type('json').status(500).json({ success: false, error: error.message });
+  }
+});
+
+// End an active call
+app.post('/api/call/:callSid/end', async (req, res) => {
+  try {
+    const { callSid } = req.params;
+
+    if (!callSid) {
+      res.type('json').status(400).json({ success: false, error: 'callSid is required' });
+      return;
+    }
+    if (!twilioClient) {
+      res.type('json').status(500).json({ success: false, error: 'Twilio not configured' });
+      return;
+    }
+
+    console.log(`📞 API: Ending call ${callSid}`);
+
+    // Update call status to completed to end it
+    const call = await twilioClient.calls(callSid).update({ status: 'completed' });
+
+    // Clean up metadata
+    callMetadata.delete(callSid);
+
+    console.log(`✅ Call ended via API - CallSid: ${callSid}`);
+
+    res.type('json').json({
+      success: true,
+      callSid: call.sid,
+      status: call.status
+    });
+  } catch (error: any) {
+    console.error('Error ending call via API:', error);
+    res.type('json').status(500).json({ success: false, error: error.message });
   }
 });
 
