@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build output (we build in Docker)
+dist
+
+# Environment files (secrets should be passed via env vars)
+.env
+.env.local
+.env.*.local
+
+# IDE and editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__
+coverage
+
+# Claude
+.claude

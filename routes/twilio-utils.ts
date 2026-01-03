@@ -1,15 +1,17 @@
 import twilio from 'twilio';
 import dotenv from 'dotenv';
 import { Request } from 'express';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
 
+const log = createLogger('twilio-utils');
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
 
 if (!accountSid || !authToken || !twilioPhoneNumber) {
-  console.warn("⚠️ Twilio credentials not configured. Twilio features will be disabled.");
+  log.warn('Twilio credentials not configured. Twilio features will be disabled.');
 }
 
 const client = accountSid && authToken ? twilio(accountSid, authToken) : null;

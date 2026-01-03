@@ -3,8 +3,11 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { ExternalConfig } from '../types/external-config.js';
 import { AppConfiguration } from '../types/config.js';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
+
+const log = createLogger('external-config-loader');
 
 // Default configuration directory - can be overridden by CONFIG_DIR env variable
 const DEFAULT_CONFIG_DIR = path.join(process.cwd(), 'config-external');
@@ -15,7 +18,7 @@ class ExternalConfigLoader {
   private promptCache: Map<string, string> = new Map();
 
   constructor() {
-    console.log(`📁 Using configuration directory: ${CONFIG_DIR}`);
+    log.info('Using configuration directory', { configDir: CONFIG_DIR });
   }
 
   /**
@@ -35,7 +38,7 @@ class ExternalConfigLoader {
       // Validate required fields
       this.validateConfig(config);
       
-      console.log(`✅ Loaded configuration: ${config.app.name} (${config.persona.type})`);
+      log.info('Loaded configuration', { appName: config.app.name, personaType: config.persona.type });
       return config;
     } catch (error) {
       throw new Error(`Failed to parse config.json: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -105,17 +108,17 @@ class ExternalConfigLoader {
         try {
           const content = fs.readFileSync(promptPath, 'utf-8');
           this.promptCache.set(cacheKey, content);
-          console.log(`📝 Loaded prompt: ${filename}`);
+          log.info('Loaded prompt', { filename });
           return content;
         } catch (error) {
-          console.warn(`⚠️ Failed to read prompt file ${filename}:`, error);
+          log.warn('Failed to read prompt file', { filename, error: error instanceof Error ? error.message : error });
         }
       }
     }
 
     // Ultimate fallback
     const fallbackPrompt = `You are {{name}}, a {{role}} at {{company}}. Please assist the customer professionally in ${language}.`;
-    console.warn(`⚠️ No prompt file found for ${language}/${personaType}, using fallback`);
+    log.warn('No prompt file found, using fallback', { language, personaType });
     this.promptCache.set(cacheKey, fallbackPrompt);
     return fallbackPrompt;
   }
@@ -215,7 +218,7 @@ class ExternalConfigLoader {
       this.configCache.set(cacheKey, appConfig);
       return appConfig;
     } catch (error) {
-      console.error('❌ Failed to load external configuration:', error);
+      log.error('Failed to load external configuration', { error: error instanceof Error ? error.message : error });
       throw error;
     }
   }
@@ -226,7 +229,7 @@ class ExternalConfigLoader {
   clearCache(): void {
     this.configCache.clear();
     this.promptCache.clear();
-    console.log('🔄 Configuration cache cleared');
+    log.info('Configuration cache cleared');
   }
 
   /**

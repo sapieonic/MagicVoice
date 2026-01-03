@@ -3,6 +3,9 @@ import WebSocket from 'ws';
 import { makeHeaders } from './utils.js';
 import { audioRecorderManager } from '../utils/audioUtils.js';
 import { executeFunctionCall } from '../functions/index.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('observer');
 
 const router = express.Router();
 
@@ -43,7 +46,7 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
     const ws = new WebSocket(url, { headers: makeHeaders() });
     
     ws.on('open', () => {
-      console.log("✅ Observer WebSocket connected for call:", callId);
+      log.info('Observer WebSocket connected', { callId });
       // Trigger initial response after connection
       setTimeout(() => ws.send(JSON.stringify({ type: "response.create" })), 250);
     });
@@ -54,7 +57,7 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
 
         // Log all messages except audio transcript deltas (too verbose)
         if (message.type !== "response.audio_transcript.delta") {
-          console.log(`🔍 [${callId}]`, message.type, message.error ? `Error: ${message.error.message}` : '');
+          log.debug('Observer message', { callId, type: message.type, error: message.error?.message });
         }
 
         // Handle audio recording for WebRTC calls
@@ -72,16 +75,16 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
 
         // Handle specific message types
         if (message.type === 'session.created') {
-          console.log(`📞 Session created for call ${callId}`);
+          log.info('Session created', { callId });
         } else if (message.type === 'response.done') {
-          console.log(`✅ Response completed for call ${callId}`);
+          log.debug('Response completed', { callId });
         } else if (message.type === 'response.function_call_arguments.done') {
-          console.log(`🔧 Function call completed for call ${callId}`);
+          log.info('Function call completed', { callId });
           try {
             const functionName = message.name;
             const args = JSON.parse(message.arguments || '{}');
             const callIdForFunction = message.call_id;
-            console.log(`🔧 [${callId}] Executing function: ${functionName}`);
+            log.info('Executing function', { callId, functionName });
 
             const result = executeFunctionCall(functionName!, args);
 
@@ -101,7 +104,7 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
             ws.send(JSON.stringify({ type: 'response.create' }));
 
           } catch (error) {
-            console.error(`❌ [${callId}] Error executing function call:`, error);
+            log.error('Error executing function call', { callId, error: error instanceof Error ? error.message : error });
 
             // Send error result back to OpenAI
             const errorMessage = {
@@ -120,29 +123,29 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
             ws.send(JSON.stringify({ type: 'response.create' }));
           }
         } else if (message.type === 'error') {
-          console.error(`❌ Error in call ${callId}:`, message.error);
+          log.error('Error in call', { callId, error: message.error });
         }
       } catch (error) {
-        console.error('Error processing observer message:', error);
+        log.error('Error processing observer message', { error: error instanceof Error ? error.message : error });
       }
     });
-    
+
     ws.on('error', (error: Error) => {
-      console.error(`🔴 Observer WebSocket failed for call ${callId}:`, error.message);
+      log.error('Observer WebSocket failed', { callId, error: error.message });
     });
 
     ws.on('close', () => {
-      console.log(`📡 Observer WebSocket closed for call ${callId}`);
+      log.info('Observer WebSocket closed', { callId });
 
       // Stop and save recording if active
       const recorder = audioRecorderManager.getRecorder(callId);
       if (recorder.recording) {
         recorder.stop().then(paths => {
           if (paths.incomingPath || paths.outgoingPath) {
-            console.log(`📼 WebRTC recordings saved for call ${callId}:`, paths);
+            log.info('WebRTC recordings saved', { callId, paths });
           }
         }).catch(err => {
-          console.error(`Failed to save WebRTC recordings for call ${callId}:`, err);
+          log.error('Failed to save WebRTC recordings', { callId, error: err.message });
         });
       }
       audioRecorderManager.removeRecorder(callId);
@@ -152,7 +155,7 @@ router.post('/:callId', express.json(), async (req: Request<{ callId: string }>,
     res.status(200).json({ success: true, message: `Observer started for call ${callId}` });
     
   } catch (error: any) {
-    console.error('Observer setup error:', error);
+    log.error('Observer setup error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
