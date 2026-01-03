@@ -21,30 +21,28 @@ RUN npm run build
 # Stage 2: Production
 FROM node:20-alpine AS production
 
-WORKDIR /app
-
 # Create non-root user for security
 RUN addgroup -g 1001 -S appgroup && \
     adduser -S appuser -u 1001 -G appgroup
 
-# Copy package files
-COPY package*.json ./
+WORKDIR /app
 
-# Install only production dependencies
+# Copy package files and install dependencies (as root for npm ci)
+COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
 
-# Copy built files from builder stage
-COPY --from=builder /app/dist ./dist
+# Copy built files from builder stage with correct ownership
+COPY --chown=appuser:appgroup --from=builder /app/dist ./dist
 
-# Copy public assets and config
-COPY --from=builder /app/dist/public ./dist/public
-COPY --from=builder /app/dist/prompts ./dist/prompts
+# Copy public assets and config with correct ownership
+COPY --chown=appuser:appgroup --from=builder /app/dist/public ./dist/public
+COPY --chown=appuser:appgroup --from=builder /app/dist/prompts ./dist/prompts
 
-# Copy external config directory (can be overridden with volume mount)
-COPY config-external ./config-external
+# Copy external config directory with correct ownership
+COPY --chown=appuser:appgroup config-external ./config-external
 
-# Change ownership to non-root user
-RUN chown -R appuser:appgroup /app
+# Change ownership of package files only (small, fast)
+RUN chown appuser:appgroup package*.json
 
 # Switch to non-root user
 USER appuser
