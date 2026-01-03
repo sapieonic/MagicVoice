@@ -5,8 +5,11 @@ import { fileURLToPath } from 'url';
 import { SessionConfig } from '../types/index.js';
 import { getConfiguration } from '../config/app.config.js';
 import { FUNCTION_DEFINITIONS } from '../functions/index.js';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
+
+const log = createLogger('utils');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,21 +55,21 @@ function loadPromptTemplate(language: string, personaType?: string): string {
     
     return template;
   } catch (error) {
-    console.error(`Error loading prompt template for language: ${language}`, error);
+    log.warn('Error loading prompt template', { language, error: error instanceof Error ? error.message : error });
     // Fallback to English template
     const fallbackPath = path.join(promptsDir, 'english.template.txt');
     try {
       let fallbackTemplate = fs.readFileSync(fallbackPath, 'utf-8');
       // Apply same variable substitution for fallback
       fallbackTemplate = fallbackTemplate.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-        const value = config.persona[key as keyof typeof config.persona] || 
-                     config.persona.variables[key] || 
+        const value = config.persona[key as keyof typeof config.persona] ||
+                     config.persona.variables[key] ||
                      match;
         return typeof value === 'string' ? value : match;
       });
       return fallbackTemplate;
     } catch (fallbackError) {
-      console.error('Failed to load fallback template:', fallbackError);
+      log.error('Failed to load fallback template', { error: fallbackError instanceof Error ? fallbackError.message : fallbackError });
       return `You are ${config.persona.name}, a ${config.persona.role} at ${config.persona.company}. Please assist the customer professionally.`;
     }
   }

@@ -2,7 +2,9 @@ import express, { Request, Response } from 'express';
 import fetch from 'node-fetch';
 import { makeHeaders, makeSession, getAppConfiguration } from './utils.js';
 import { audioRecorderManager } from '../utils/audioUtils.js';
+import { createLogger } from '../logger.js';
 
+const log = createLogger('rtc');
 const router = express.Router();
 
 // POST /rtc : create a new WebRTC call
@@ -16,23 +18,22 @@ router.post('/', express.text({ type: '*/*' }), async (req: Request, res: Respon
     const personaType = req.headers['x-persona'] as string;
     const enableRecording = req.headers['x-enable-recording'] === 'true';
     const config = getAppConfiguration(personaType);
-    console.log(`🌐 Creating WebRTC session with language: ${language}, persona: ${personaType || 'default'}, recording: ${enableRecording}`);
-    console.log(`📋 Using bot persona: ${config.persona.name} (${config.persona.role})`);
-    
+    log.info('Creating WebRTC session', { language, persona: personaType || 'default', recording: enableRecording, botName: config.persona.name });
+
     const sessionConfig = makeSession(language, personaType);
-    console.log(`🔧 Session config:`, JSON.stringify(sessionConfig, null, 2));
+    log.debug('Session config', { sessionConfig });
 
     const formData = new FormData();
     formData.set("sdp", req.body);
     formData.set("session", JSON.stringify(sessionConfig));
 
-    console.log(`📤 Sending request to OpenAI Realtime API`);
+    log.debug('Sending request to OpenAI Realtime API');
     const opts = { method: "POST", headers, body: formData };
     const resp = await fetch(url, opts);
     
     if (!resp.ok) {
       const errText = await resp.text().catch(() => "<no body>");
-      console.error(`🔴 start call failed: ${resp.status} ${errText}`);
+      log.error('Start call failed', { status: resp.status, error: errText });
       res.status(500).send("Internal error");
       return;
     }
@@ -40,13 +41,13 @@ router.post('/', express.text({ type: '*/*' }), async (req: Request, res: Respon
     const contentType = resp.headers.get("Content-Type");
     const location = resp.headers.get("Location");
     const callId = location?.split("/").pop();
-    console.log("✅ WebRTC call created:", callId);
+    log.info('WebRTC call created', { callId });
 
     // Start recording if enabled
     if (enableRecording && callId) {
       const recorder = audioRecorderManager.getRecorder(callId);
       recorder.start();
-      console.log(`🎙️ Recording started for WebRTC call ${callId}`);
+      log.info('Recording started for WebRTC call', { callId });
     }
 
     // Kick off observer in the background (fire-and-forget)
@@ -55,7 +56,7 @@ router.post('/', express.text({ type: '*/*' }), async (req: Request, res: Respon
     const selfUrl = `${protocol}://${host}`;
 
     fetch(`${selfUrl}/observer/${callId}`, { method: "POST" }).catch(err => {
-      console.log("Observer connection error:", err.message);
+      log.warn('Observer connection error', { error: err.message });
     });
 
     // Send the response back to client
@@ -66,7 +67,7 @@ router.post('/', express.text({ type: '*/*' }), async (req: Request, res: Respon
     res.send(responseText);
 
   } catch (error: any) {
-    console.error('RTC call error:', error);
+    log.error('RTC call error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });

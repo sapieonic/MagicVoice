@@ -3,15 +3,18 @@ import WebSocket from 'ws';
 import { twilioClient, twilioPhoneNumber } from './twilio-utils.js';
 import { makeSession, getAppConfiguration } from './utils.js';
 import dotenv from 'dotenv';
-import { 
-  CallMetadata, 
-  TwilioMediaMessage, 
+import {
+  CallMetadata,
+  TwilioMediaMessage,
   OpenAIRealtimeMessage,
   TwilioCallRequest,
-  TwilioWebhookRequest 
+  TwilioWebhookRequest
 } from '../types/index.js';
+import { createLogger } from '../logger.js';
 
 dotenv.config();
+
+const log = createLogger('twilio-realtime');
 
 const router = express.Router();
 const activeConnections = new Map<string, WebSocket>();
@@ -49,8 +52,7 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
   try {
     const { phoneNumber, language = appConfig.bot.defaultLanguage, personaType } = req.body;
     const config = getAppConfiguration(personaType);
-    console.log(`🌐 Creating Twilio call with language: ${language}, persona: ${personaType || 'default'}`);
-    console.log(`📋 Using bot persona: ${config.persona.name} (${config.persona.role})`);
+    log.info('Creating Twilio call', { language, persona: personaType || 'default', botName: config.persona.name, role: config.persona.role });
     
     if (!twilioClient) {
       res.status(500).json({ error: 'Twilio not configured' });
@@ -68,7 +70,7 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
     const host = forwardedHost || req.get('host');
     const baseUrl = `${forwardedProto}://${host}`;
     
-    console.log(`📍 Using webhook base URL: ${baseUrl}`);
+    log.debug('Using webhook base URL', { baseUrl });
     
     // Create the call with media streams
     const call = await twilioClient.calls.create({
@@ -83,7 +85,7 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
     // Store call metadata including persona
     callMetadata.set(call.sid, { language, phoneNumber, personaType });
     
-    console.log(`✅ Call initiated to ${phoneNumber}, Call SID: ${call.sid}`);
+    log.info('Call initiated', { phoneNumber, callSid: call.sid, status: call.status });
     res.json({ 
       success: true, 
       callSid: call.sid,
@@ -91,14 +93,14 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
     });
 
   } catch (error: any) {
-    console.error('Error initiating call:', error);
+    log.error('Error initiating call', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
 
 // TwiML endpoint - handles call when answered
 router.get('/answer', (_req: Request, res: Response) => {
-  console.log('📞 Twilio webhook verification request received');
+  log.debug('Twilio webhook verification request received');
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
     <Response>
@@ -109,7 +111,7 @@ router.get('/answer', (_req: Request, res: Response) => {
 // POST handler for actual call handling
 router.post('/answer', express.urlencoded({ extended: false }), (req: Request, res: Response) => {
   const callSid = req.body.CallSid;
-  console.log(`📞 Call answered: ${callSid}`);
+  log.info('Call answered', { callSid });
 
   // Generate TwiML to connect to Media Streams
   const forwardedHost = req.get('x-forwarded-host');
@@ -118,7 +120,7 @@ router.post('/answer', express.urlencoded({ extended: false }), (req: Request, r
   const wsProto = (forwardedProto === 'https' || req.protocol === 'https') ? 'wss' : 'ws';
   const streamUrl = `${wsProto}://${host}/twilio-realtime/media-stream`;
   
-  console.log(`🔌 WebSocket URL: ${streamUrl}`);
+  log.debug('WebSocket URL configured', { streamUrl });
   
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -133,7 +135,7 @@ router.post('/answer', express.urlencoded({ extended: false }), (req: Request, r
 
 // WebSocket handler for Twilio Media Streams
 export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
-  console.log('🎙️ Twilio Media Stream WebSocket connected');
+  log.info('Twilio Media Stream WebSocket connected');
   
   // Connection-specific state
   let streamSid: string | null = null;
@@ -182,16 +184,16 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
     };
 
     if (customSystemPrompt) {
-      console.log(`📋 Sending session update with custom system prompt (voice: ${voice})`);
+      log.info('Sending session update with custom system prompt', { voice });
     } else {
       const currentConfig = getAppConfiguration(callPersonaType);
-      console.log(`📋 Sending session update with ${callLanguage} instructions for persona: ${currentConfig.persona.name}`);
+      log.info('Sending session update', { language: callLanguage, persona: currentConfig.persona.name });
     }
     openAiWs.send(JSON.stringify(sessionUpdate));
 
     // Trigger initial response after session setup
     setTimeout(() => {
-      console.log('🚀 Triggering initial bot response');
+      log.debug('Triggering initial bot response');
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
     }, 500);
   };
@@ -200,7 +202,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
   const handleSpeechStartedEvent = () => {
     if (markQueue.length > 0 && responseStartTimestampTwilio != null) {
       const elapsedTime = latestMediaTimestamp - responseStartTimestampTwilio;
-      if (SHOW_TIMING_MATH) console.log(`Calculating elapsed time for truncation: ${elapsedTime}ms`);
+      if (SHOW_TIMING_MATH) log.debug('Calculating elapsed time for truncation', { elapsedTime });
 
       if (lastAssistantItem) {
         const truncateEvent = {
@@ -209,7 +211,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
           content_index: 0,
           audio_end_ms: elapsedTime
         };
-        if (SHOW_TIMING_MATH) console.log('Sending truncation event:', JSON.stringify(truncateEvent));
+        if (SHOW_TIMING_MATH) log.debug('Sending truncation event', { truncateEvent });
         openAiWs.send(JSON.stringify(truncateEvent));
       }
 
@@ -241,7 +243,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
 
   // OpenAI WebSocket event handlers
   openAiWs.on('open', () => {
-    console.log('✅ Connected to OpenAI Realtime API');
+    log.info('Connected to OpenAI Realtime API');
     setTimeout(initializeSession, 100);
   });
 
@@ -250,7 +252,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
       const response: OpenAIRealtimeMessage = JSON.parse(data.toString());
 
       if (LOG_EVENT_TYPES.includes(response.type)) {
-        console.log(`📌 OpenAI event: ${response.type}`);
+        log.debug('OpenAI event', { type: response.type });
       }
 
       // Handle audio output from OpenAI
@@ -265,7 +267,7 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
         // Track timing for interruption handling
         if (!responseStartTimestampTwilio) {
           responseStartTimestampTwilio = latestMediaTimestamp;
-          if (SHOW_TIMING_MATH) console.log(`Setting start timestamp: ${responseStartTimestampTwilio}ms`);
+          if (SHOW_TIMING_MATH) log.debug('Setting start timestamp', { responseStartTimestampTwilio });
         }
 
         if (response.item_id) {
@@ -273,39 +275,39 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
         }
         
         sendMark();
-        console.log('🔊 Audio sent to Twilio');
+        // log.trace('Audio sent to Twilio');
       }
 
       // Handle speech interruption
       if (response.type === 'input_audio_buffer.speech_started') {
-        console.log('🎤 User started speaking (interruption)');
+        log.debug('User started speaking (interruption)');
         handleSpeechStartedEvent();
       }
 
       // Log conversation events
       if (response.type === 'conversation.item.created' && response.item?.role === 'assistant') {
-        console.log('🤖 Assistant speaking');
+        log.debug('Assistant speaking');
       }
 
       if (response.type === 'response.done') {
-        console.log('✅ Response complete');
+        log.debug('Response complete');
       }
 
       if (response.type === 'error') {
-        console.error('❌ OpenAI error:', response.error);
+        log.error('OpenAI error', { error: response.error });
       }
 
     } catch (error) {
-      console.error('Error processing OpenAI message:', error);
+      log.error('Error processing OpenAI message', { error: error instanceof Error ? error.message : error });
     }
   });
 
   openAiWs.on('error', (error: Error) => {
-    console.error('OpenAI WebSocket error:', error);
+    log.error('OpenAI WebSocket error', { error: error.message });
   });
 
   openAiWs.on('close', () => {
-    console.log('OpenAI WebSocket closed');
+    log.info('OpenAI WebSocket closed');
   });
 
   // Handle incoming messages from Twilio
@@ -328,13 +330,13 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
               customVoice = metadata.customVoice;
 
               if (customSystemPrompt) {
-                console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Using custom prompt`);
+                log.info('Media stream started with custom prompt', { callSid, streamSid });
               } else {
                 const config = getAppConfiguration(callPersonaType);
-                console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage}, Persona: ${config.persona.name}`);
+                log.info('Media stream started', { callSid, streamSid, language: callLanguage, persona: config.persona.name });
               }
             } else {
-              console.log(`📞 Media stream started - CallSid: ${callSid}, StreamSid: ${streamSid}, Language: ${callLanguage} (default)`);
+              log.info('Media stream started with defaults', { callSid, streamSid, language: callLanguage });
             }
 
             // Reset timestamps for new stream
@@ -367,24 +369,24 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
           break;
 
         case 'stop':
-          console.log(`🛑 Media stream stopped for call: ${callSid}`);
+          log.info('Media stream stopped', { callSid });
           if (openAiWs.readyState === WebSocket.OPEN) {
             openAiWs.close();
           }
           break;
 
         default:
-          console.log('Received event:', data.event);
+          log.trace('Received Twilio event', { event: data.event });
           break;
       }
     } catch (error) {
-      console.error('Error processing Twilio message:', error);
+      log.error('Error processing Twilio message', { error: error instanceof Error ? error.message : error });
     }
   });
 
   // Handle connection close
   ws.on('close', () => {
-    console.log('📡 Twilio WebSocket disconnected');
+    log.info('Twilio WebSocket disconnected');
     if (openAiWs.readyState === WebSocket.OPEN) {
       openAiWs.close();
     }
@@ -396,19 +398,19 @@ export const mediaStreamWebSocketHandler = (ws: WebSocket, _req: Request) => {
   });
 
   ws.on('error', (error: Error) => {
-    console.error('Twilio WebSocket error:', error);
+    log.error('Twilio WebSocket error', { error: error.message });
   });
 };
 
 // Status callback endpoint
 router.get('/status', (_req: Request, res: Response) => {
-  console.log('📞 Status webhook verification request received');
+  log.debug('Status webhook verification request received');
   res.status(200).send('Status webhook configured');
 });
 
 router.post('/status', express.urlencoded({ extended: false }), (req: Request<{}, {}, TwilioWebhookRequest>, res: Response) => {
   const { CallSid, CallStatus, CallDuration } = req.body;
-  console.log(`📞 Call status - SID: ${CallSid}, Status: ${CallStatus}, Duration: ${CallDuration}s`);
+  log.info('Call status update', { callSid: CallSid, status: CallStatus, duration: CallDuration });
   
   if (CallStatus === 'completed' || CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
     activeConnections.delete(CallSid);

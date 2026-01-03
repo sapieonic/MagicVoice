@@ -1,3 +1,7 @@
+import { createLogger } from '../logger.js';
+
+const log = createLogger('functions');
+
 export interface FunctionCallArgs {
   [key: string]: any;
 }
@@ -20,9 +24,7 @@ export interface FunctionDefinition {
 }
 
 export function remindMeLater(args: { date: string; message: string }): FunctionResult {
-  console.log('🔔 Function Call: remindMeLater');
-  console.log('📅 Date:', args.date);
-  console.log('💬 Message:', args.message);
+  log.info('Function Call: remindMeLater', { date: args.date, message: args.message });
 
   return {
     success: true,
@@ -36,9 +38,7 @@ export function remindMeLater(args: { date: string; message: string }): Function
 }
 
 export function sendSms(args: { message: string; phoneNumber?: string }): FunctionResult {
-  console.log('📱 Function Call: sendSms');
-  console.log('💬 Message:', args.message);
-  console.log('📞 Phone Number:', args.phoneNumber || 'Not provided');
+  log.info('Function Call: sendSms', { message: args.message, phoneNumber: args.phoneNumber || 'Not provided' });
 
   return {
     success: true,
@@ -52,10 +52,7 @@ export function sendSms(args: { message: string; phoneNumber?: string }): Functi
 }
 
 export function escalateItHigher(args: { message: string; severity: string; department?: string }): FunctionResult {
-  console.log('🚨 Function Call: escalateItHigher');
-  console.log('💬 Message:', args.message);
-  console.log('⚠️ Severity:', args.severity);
-  console.log('🏢 Department:', args.department || 'Not specified');
+  log.info('Function Call: escalateItHigher', { message: args.message, severity: args.severity, department: args.department || 'Not specified' });
 
   return {
     success: true,
@@ -136,7 +133,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
 ];
 
 export function executeFunctionCall(functionName: string, args: FunctionCallArgs): FunctionResult {
-  console.log(`🔧 Executing function: ${functionName} with args:`, args);
+  log.info('Executing function', { functionName, args });
 
   switch (functionName) {
     case 'remindMeLater':
@@ -146,7 +143,7 @@ export function executeFunctionCall(functionName: string, args: FunctionCallArgs
     case 'escalateItHigher':
       return escalateItHigher(args as { message: string; severity: string; department?: string });
     default:
-      console.error(`❌ Unknown function: ${functionName}`);
+      log.error('Unknown function', { functionName });
       return {
         success: false,
         message: `Unknown function: ${functionName}`

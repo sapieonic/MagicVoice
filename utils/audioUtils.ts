@@ -1,5 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('audio-utils');
 
 /**
  * Audio recording and WAV file utilities for saving call audio
@@ -126,7 +129,7 @@ export class AudioRecorder {
     this.incomingBuffer = [];
     this.outgoingBuffer = [];
     this.combinedBuffer = [];
-    console.log(`🎙️ Started recording for call ${this.callId}`);
+    log.info('Started recording', { callId: this.callId });
   }
 
   /**
@@ -168,7 +171,7 @@ export class AudioRecorder {
     if (!this.isRecording) return {};
 
     this.isRecording = false;
-    console.log(`⏹️ Stopped recording for call ${this.callId}`);
+    log.info('Stopped recording', { callId: this.callId });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const paths: { incomingPath?: string; outgoingPath?: string; combinedPath?: string } = {};

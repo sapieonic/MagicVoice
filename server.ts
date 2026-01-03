@@ -13,6 +13,7 @@ import observerRouter from './routes/observer.js';
 import recordingsRouter from './routes/recordings.js';
 import { getConfiguration, getAvailablePersonas } from './config/app.config.js';
 import { externalConfigLoader, hasExternalConfiguration, getConfigurationDirectory } from './config/external-config-loader.js';
+import { logger } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,8 +118,7 @@ app.post('/api/call', express.json(), async (req, res) => {
     const host = forwardedHost || req.get('host');
     const baseUrl = `${forwardedProto}://${host}`;
 
-    console.log(`📞 API Call: Initiating call to ${phoneNumber} with custom prompt (record: ${record})`);
-    console.log(`📍 Using webhook base URL: ${baseUrl}`);
+    logger.info('API Call: Initiating call with custom prompt', { phoneNumber, record, baseUrl });
 
     // Create call
     const call = await twilioClient.calls.create({
@@ -138,7 +138,7 @@ app.post('/api/call', express.json(), async (req, res) => {
       customVoice: voice
     });
 
-    console.log(`✅ Call initiated via API - CallSid: ${call.sid}`);
+    logger.info('Call initiated via API', { callSid: call.sid, status: call.status });
 
     res.type('json').json({
       success: true,
@@ -146,7 +146,7 @@ app.post('/api/call', express.json(), async (req, res) => {
       status: call.status
     });
   } catch (error: any) {
-    console.error('Error initiating call via API:', error);
+    logger.error('Error initiating call via API', { error: error.message });
     res.type('json').status(500).json({ success: false, error: error.message });
   }
 });
@@ -165,7 +165,7 @@ app.post('/api/call/:callSid/end', async (req, res) => {
       return;
     }
 
-    console.log(`📞 API: Ending call ${callSid}`);
+    logger.info('API: Ending call', { callSid });
 
     // Update call status to completed to end it
     const call = await twilioClient.calls(callSid).update({ status: 'completed' });
@@ -173,7 +173,7 @@ app.post('/api/call/:callSid/end', async (req, res) => {
     // Clean up metadata
     callMetadata.delete(callSid);
 
-    console.log(`✅ Call ended via API - CallSid: ${callSid}`);
+    logger.info('Call ended via API', { callSid, status: call.status });
 
     res.type('json').json({
       success: true,
@@ -181,7 +181,7 @@ app.post('/api/call/:callSid/end', async (req, res) => {
       status: call.status
     });
   } catch (error: any) {
-    console.error('Error ending call via API:', error);
+    logger.error('Error ending call via API', { callSid: req.params.callSid, error: error.message });
     res.type('json').status(500).json({ success: false, error: error.message });
   }
 });
@@ -203,8 +203,12 @@ app.get('/twilio', (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ ${appConfig.app.name} running on http://localhost:${PORT}`);
-  console.log(`🎤 Voice bot ready: ${appConfig.persona.name} (${appConfig.persona.role})`);
-  console.log(`🌐 Default language: ${appConfig.bot.defaultLanguage}`);
-  console.log(`🔧 Available personas: ${getAvailablePersonas().join(', ')}`);
+  logger.info('Server started', {
+    appName: appConfig.app.name,
+    port: PORT,
+    persona: appConfig.persona.name,
+    role: appConfig.persona.role,
+    defaultLanguage: appConfig.bot.defaultLanguage,
+    availablePersonas: getAvailablePersonas(),
+  });
 });

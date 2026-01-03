@@ -1,4 +1,7 @@
 import { AppConfiguration } from '../types/config.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('app-config');
 
 // Minimal fallback configuration - used only when external config fails
 const fallbackConfig: AppConfiguration = {
@@ -66,7 +69,7 @@ export function getAvailablePersonas(): string[] {
       const config = getExternalConfiguration();
       return [config.persona.type];
     } catch (error) {
-      console.warn('📁 Failed to load external config, using fallback:', error);
+      log.warn('Failed to load external config, using fallback', { error: error instanceof Error ? error.message : error });
       return ['fallback_assistant'];
     }
   }
@@ -80,17 +83,17 @@ export function getConfiguration(_personaType?: string, language?: string): AppC
   // Try external configuration first (primary path)
   if (hasExternalConfiguration()) {
     try {
-      console.log('📁 Using external configuration');
+      log.info('Using external configuration');
       return getExternalConfiguration(language);
     } catch (error) {
-      console.warn('❌ External config failed, using fallback configuration:', error);
+      log.warn('External config failed, using fallback configuration', { error: error instanceof Error ? error.message : error });
     }
   } else {
-    console.log('📁 No external configuration found, using fallback');
+    log.info('No external configuration found, using fallback');
   }
-  
+
   // Use minimal fallback configuration
-  console.log('⚙️ Using fallback configuration');
+  log.info('Using fallback configuration');
   const config = { ...fallbackConfig };
   
   // Apply variable substitution to fallback persona

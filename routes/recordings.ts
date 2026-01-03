@@ -2,7 +2,9 @@ import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { audioRecorderManager } from '../utils/audioUtils.js';
+import { createLogger } from '../logger.js';
 
+const log = createLogger('recordings');
 const router = express.Router();
 const recordingsDir = path.join(process.cwd(), 'recordings');
 
@@ -36,7 +38,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
 
     res.json({ recordings });
   } catch (error: any) {
-    console.error('Error listing recordings:', error);
+    log.error('Error listing recordings', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -57,7 +59,7 @@ router.get('/:filename', async (req: Request<{ filename: string }>, res: Respons
 
     res.download(filePath);
   } catch (error: any) {
-    console.error('Error downloading recording:', error);
+    log.error('Error downloading recording', { filename: req.params.filename, error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -79,7 +81,7 @@ router.delete('/:filename', async (req: Request<{ filename: string }>, res: Resp
     await fs.promises.unlink(filePath);
     res.json({ success: true, message: `Recording ${filename} deleted` });
   } catch (error: any) {
-    console.error('Error deleting recording:', error);
+    log.error('Error deleting recording', { filename: req.params.filename, error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -101,7 +103,7 @@ router.post('/:callId/start', async (req: Request<{ callId: string }>, res: Resp
     recorder.start();
     res.json({ success: true, message: `Recording started for call ${callId}` });
   } catch (error: any) {
-    console.error('Error starting recording:', error);
+    log.error('Error starting recording', { callId: req.params.callId, error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -127,7 +129,7 @@ router.post('/:callId/stop', async (req: Request<{ callId: string }>, res: Respo
       files: paths
     });
   } catch (error: any) {
-    console.error('Error stopping recording:', error);
+    log.error('Error stopping recording', { callId: req.params.callId, error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
