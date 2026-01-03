@@ -410,13 +410,14 @@ router.get('/status', (_req: Request, res: Response) => {
 
 router.post('/status', express.urlencoded({ extended: false }), (req: Request<{}, {}, TwilioWebhookRequest>, res: Response) => {
   const { CallSid, CallStatus, CallDuration } = req.body;
-  log.info('Call status update', { callSid: CallSid, status: CallStatus, duration: CallDuration });
+  const status = { callSid: CallSid, status: CallStatus, duration: CallDuration };
+  log.info('Call status update', status);
   
   if (CallStatus === 'completed' || CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
     activeConnections.delete(CallSid);
   }
   
-  res.status(200).end();
+  res.status(200).json(status).end();
 });
 
 export default router;
