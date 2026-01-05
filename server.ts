@@ -115,7 +115,7 @@ app.post('/api/call', express.json(), async (req, res) => {
 
     // Build webhook URL
     const forwardedHost = req.get('x-forwarded-host');
-    const forwardedProto = req.get('x-forwarded-proto') || 'https';
+    const forwardedProto = 'https'; // Always use https, twillio doesn't work well with http
     const host = forwardedHost || req.get('host');
     const baseUrl = `${forwardedProto}://${host}`;
 
