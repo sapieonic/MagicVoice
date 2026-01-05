@@ -13,10 +13,11 @@ import observerRouter from './routes/observer.js';
 import recordingsRouter from './routes/recordings.js';
 import { getConfiguration, getAvailablePersonas } from './config/app.config.js';
 import { externalConfigLoader, hasExternalConfiguration, getConfigurationDirectory } from './config/external-config-loader.js';
-import { logger } from './logger.js';
+import { createLogger } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const logger = createLogger('server');
 
 const app = express();
 expressWs(app);

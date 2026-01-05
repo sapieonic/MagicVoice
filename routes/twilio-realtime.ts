@@ -66,7 +66,7 @@ router.post('/call', express.json(), async (req: Request<{}, {}, EnhancedTwilioC
 
     // Get the base URL for webhooks
     const forwardedHost = req.get('x-forwarded-host');
-    const forwardedProto = req.get('x-forwarded-proto') || 'https';
+    const forwardedProto = 'https'; // Always use HTTPS for webhooks, twillio doesn't work well with http
     const host = forwardedHost || req.get('host');
     const baseUrl = `${forwardedProto}://${host}`;
     
@@ -115,9 +115,8 @@ router.post('/answer', express.urlencoded({ extended: false }), (req: Request, r
 
   // Generate TwiML to connect to Media Streams
   const forwardedHost = req.get('x-forwarded-host');
-  const forwardedProto = req.get('x-forwarded-proto') || 'https';
   const host = forwardedHost || req.get('host');
-  const wsProto = (forwardedProto === 'https' || req.protocol === 'https') ? 'wss' : 'ws';
+  const wsProto = 'wss'; // Always use wss, twillio doesn't work well with ws
   const streamUrl = `${wsProto}://${host}/twilio-realtime/media-stream`;
   
   log.debug('WebSocket URL configured', { streamUrl });
